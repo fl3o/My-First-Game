@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Nomad - Joystick Edition</title>
+    <style>
+        body { margin: 0; background: #0a0a0a; color: #00ffcc; display: flex; flex-direction: column; align-items: center; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; touch-action: none; }
+        canvas { border: 2px solid #00ffcc; background: #000; width: 100vw; height: 100vh; display: block; box-shadow: 0 0 20px rgba(0,255,204,0.3); }
+
+        /* HUD en jeu */
+        #hud { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); display: none; gap: 20px; align-items: center; z-index: 10; background: rgba(0,0,0,0.6); border: 1px solid #00ffcc; border-radius: 12px; padding: 8px 24px; backdrop-filter: blur(4px); }
+        .hud-item { display: flex; flex-direction: column; align-items: center; }
+        .hud-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7; }
+        .hud-value { font-size: 22px; font-weight: 700; text-shadow: 0 0 10px rgba(0,255,204,0.5); }
+        .hud-divider { width: 1px; height: 30px; background: rgba(0,255,204,0.3); }
+        #save-hint { position: fixed; bottom: 150px; left: 50%; transform: translateX(-50%); font-size: 13px; opacity: 0.7; letter-spacing: 1px; z-index: 10; background: rgba(0,0,0,0.5); padding: 4px 14px; border-radius: 6px; border: 1px solid rgba(0,255,204,0.3); }
+        #save-btn { position: fixed; top: 10px; right: 10px; z-index: 10; padding: 8px 18px; border: 1px solid #00ffcc; background: rgba(0,255,204,0.12); color: #00ffcc; font-size: 13px; border-radius: 6px; cursor: pointer; letter-spacing: 1px; }
+
+        /* Interface démarrage */
+        #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: radial-gradient(ellipse at center, rgba(10,30,30,0.95) 0%, rgba(0,0,0,0.95) 100%); z-index: 20; }
+        #ui h1 { font-size: 52px; margin: 0 0 10px; letter-spacing: 8px; text-transform: uppercase; text-shadow: 0 0 20px rgba(0,255,204,0.6), 0 0 40px rgba(0,255,204,0.3); animation: pulseTitle 2.5s ease-in-out infinite; }
+        @keyframes pulseTitle { 0%,100%{ opacity: 1; } 50%{ opacity: 0.75; } }
+        .btn { padding: 14px 36px; border: 2px solid #00ffcc; background: rgba(0,255,204,0.08); color: #00ffcc; font-size: 18px; cursor: pointer; border-radius: 8px; letter-spacing: 2px; text-transform: uppercase; transition: all 0.25s ease; margin: 6px 0; min-width: 220px; }
+        .btn:hover { background: rgba(0,255,204,0.25); box-shadow: 0 0 20px rgba(0,255,204,0.4); transform: translateY(-2px); }
+        .btn:active { transform: translateY(0); }
+        #hint { margin-top: 24px; font-size: 13px; opacity: 0.5; letter-spacing: 1px; }
+        #save-status { margin-top: 8px; font-size: 12px; color: #ffaa00; opacity: 0; transition: opacity 0.5s; }
+
+        /* Le Joystick */
+        #joy-base {
+            position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+            width: 100px; height: 100px; background: rgba(255,255,255,0.06);
+            border: 2px solid rgba(0,255,204,0.4); border-radius: 50%; display: none; touch-action: none;
+            box-shadow: 0 0 15px rgba(0,255,204,0.15);
+        }
+        #joy-stick {
+            position: absolute; top: 25px; left: 25px; width: 50px; height: 50px;
+            background: rgba(0,255,204,0.85); border-radius: 50%; box-shadow: 0 0 15px #00ffcc;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="hud">
+        <div class="hud-item"><span class="hud-label">Score</span><span class="hud-value" id="score">0</span></div>
+        <div class="hud-divider"></div>
+        <div class="hud-item"><span class="hud-label">Record</span><span class="hud-value" id="best">0</span></div>
+    </div>
+    <div id="save-hint" style="display:none">Appuie sur [S] pour sauvegarder</div>
+    <button id="save-btn" onclick="saveGame()" style="display:none">SAVE</button>
+
+    <div id="ui">
+        <h1>NEON NOMAD</h1>
+        <button class="btn" onclick="start()">COMMENCER</button>
+        <button class="btn" onclick="loadGame()" style="margin-top:10px">CHARGER</button>
+        <p id="save-status"></p>
+        <p id="hint">PC: Flèches | Mobile: Joystick</p>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="joy-base"><div id="joy-stick"></div></div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const joyBase = document.getElementById('joy-base');
+        const joyStick = document.getElementById('joy-stick');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resize();
+        window.addEventListener('resize', resize);
+
+        let score = 0;
+        let active = false;
+        const p = { x: 50, y: window.innerHeight/2, s: 20, spd: 5 };
+        const enemies = [];
+        const keys = {};
+
+        // Stockage cross-contexte (localStorage avec fallback cookie/sessionStorage)
+        const _store = (() => {
+            try {
+                localStorage.setItem('__t', '1');
+                localStorage.removeItem('__t');
+                return { type: 'ls', get: k => localStorage.getItem(k), set: (k,v) => localStorage.setItem(k,v), rm: k => localStorage.removeItem(k) };
+            } catch(e) {
+                try {
+                    sessionStorage.setItem('__t', '1');
+                    sessionStorage.removeItem('__t');
+                    return { type: 'ss', get: k => sessionStorage.getItem(k), set: (k,v) => sessionStorage.setItem(k,v), rm: k => sessionStorage.removeItem(k) };
+                } catch(e2) {
+                    return { type: 'ck', get: k => {
+                        const m = document.cookie.match(new RegExp('(?:^|; )' + k + '=([^;]*)'));
+                        return m ? decodeURIComponent(m[1]) : null;
+                    }, set: (k,v) => { document.cookie = k + '=' + encodeURIComponent(v) + ';path=/;max-age=31536000'; }, rm: k => { document.cookie = k + '=;path=/;max-age=0'; } };
+                }
+            }
+        })();
+
+        const DB = {
+            getBest: () => { const v = _store.get('nn_best'); return v ? parseInt(v) : 0; },
+            setBest: v => _store.set('nn_best', v),
+            save: (data) => _store.set('nn_save', JSON.stringify(data)),
+            load: () => { try { const raw = _store.get('nn_save'); return raw ? JSON.parse(raw) : null; } catch(e){ return null; } }
+        };
+        document.getElementById('best').innerText = DB.getBest();
+
+        // Mouvement Joystick
+        let move = { x: 0, y: 0 };
+        let isMoving = false;
+
+        if ('ontouchstart' in window) {
+            joyBase.style.display = "block";
+            joyBase.addEventListener('touchstart', e => { isMoving = true; });
+            joyBase.addEventListener('touchmove', e => {
+                e.preventDefault();
+                const touch = e.touches[0];
+                const rect = joyBase.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                
+                let dx = touch.clientX - centerX;
+                let dy = touch.clientY - centerY;
+                const dist = Math.min(40, Math.sqrt(dx*dx + dy*dy));
+                const angle = Math.atan2(dy, dx);
+
+                move.x = (Math.cos(angle) * dist) / 40;
+                move.y = (Math.sin(angle) * dist) / 40;
+
+                joyStick.style.transform = `translate(${move.x * 40}px, ${move.y * 40}px)`;
+            });
+            joyBase.addEventListener('touchend', () => {
+                isMoving = false; move = { x: 0, y: 0 };
+                joyStick.style.transform = `translate(0,0)`;
+            });
+        }
+
+        window.addEventListener('keydown', e => { 
+            keys[e.code] = true; 
+            if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code)) e.preventDefault();
+            if(e.code === "KeyS") { e.preventDefault(); saveGame(); }
+        });
+        window.addEventListener('keyup', e => keys[e.code] = false);
+
+        function showGameUI() {
+            document.getElementById('ui').style.display = "none";
+            document.getElementById('hud').style.display = "flex";
+            if ('ontouchstart' in window) document.getElementById('save-btn').style.display = "block";
+            else document.getElementById('save-hint').style.display = "block";
+        }
+        function hideGameUI() {
+            document.getElementById('hud').style.display = "none";
+            document.getElementById('save-hint').style.display = "none";
+            document.getElementById('save-btn').style.display = "none";
+        }
+
+        function resetGame() {
+            score = 0;
+            p.x = 50;
+            p.y = canvas.height / 2;
+            enemies.length = 0;
+            document.getElementById('score').innerText = score;
+        }
+
+        function start() {
+            resetGame();
+            showGameUI();
+            active = true;
+            loop();
+        }
+
+        function saveGame() {
+            if (!active) return;
+            DB.save({ score, p: {x:p.x,y:p.y}, enemies });
+            const hint = document.getElementById('save-hint');
+            const original = hint.innerText;
+            hint.innerText = "Partie sauvegardée !";
+            hint.style.opacity = "1";
+            hint.style.color = "#ffaa00";
+            setTimeout(() => { hint.innerText = original; hint.style.color = ""; hint.style.opacity = "0.5"; }, 1200);
+        }
+
+        function loadGame() {
+            const data = DB.load();
+            const status = document.getElementById('save-status');
+            if (!data) {
+                status.innerText = "Aucune sauvegarde trouvée.";
+                status.style.opacity = "1";
+                setTimeout(() => status.style.opacity = "0", 2000);
+                return;
+            }
+            score = data.score || 0;
+            p.x = data.p.x; p.y = data.p.y;
+            enemies.length = 0;
+            if (data.enemies) data.enemies.forEach(e => enemies.push(e));
+            document.getElementById('score').innerText = score;
+            showGameUI();
+            active = true;
+            loop();
+        }
+
+        function loop() {
+            if (!active) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Inputs PC
+            if (keys['ArrowUp']) p.y -= p.spd;
+            if (keys['ArrowDown']) p.y += p.spd;
+            if (keys['ArrowLeft']) p.x -= p.spd;
+            if (keys['ArrowRight']) p.x += p.spd;
+
+            // Inputs Joystick
+            p.x += move.x * p.spd;
+            p.y += move.y * p.spd;
+
+            p.x = Math.max(0, Math.min(canvas.width - p.s, p.x));
+            p.y = Math.max(0, Math.min(canvas.height - p.s, p.y));
+
+            if (Math.random() < 0.03) enemies.push({ x: canvas.width, y: Math.random()*(canvas.height-25), s: 25, spd: 4 + score/15 });
+
+            ctx.fillStyle = "#00ffcc";
+            ctx.fillRect(p.x, p.y, p.s, p.s);
+
+            ctx.fillStyle = "#ff0055";
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                let e = enemies[i];
+                e.x -= e.spd;
+                ctx.fillRect(e.x, e.y, e.s, e.s);
+
+                if (p.x < e.x + e.s && p.x + p.s > e.x && p.y < e.y + e.s && p.y + p.s > e.y) {
+                    active = false;
+                    if (score > DB.getBest()) { DB.setBest(score); document.getElementById('best').innerText = score; }
+                    hideGameUI();
+                    document.getElementById('ui').style.display = "flex";
+                    document.querySelector('#ui h1').innerText = "GAME OVER";
+                    document.querySelectorAll('#ui .btn')[0].innerText = "REJOUER";
+                    const bestNow = DB.getBest();
+                    document.getElementById('hint').innerText = "Score: " + score + "  |  Record: " + bestNow;
+                }
+                if (e.x + e.s < 0) { enemies.splice(i, 1); score++; document.getElementById('score').innerText = score; }
+            }
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
