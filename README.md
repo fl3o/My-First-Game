@@ -4,7 +4,7 @@ Un jeu d'arcade minimaliste en HTML5/Canvas avec support joystick pour mobile.
 
 ## Jouer
 
-[Jouer en ligne](https://fl3o.github.io) *(remplace par ton URL GitHub Pages)*
+[Jouer en ligne](https://fl3o.github.io)
 
 ## Contrôles
 
